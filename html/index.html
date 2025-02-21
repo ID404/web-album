@@ -52,59 +52,93 @@
     <button id="fullscreenBtn">全屏</button>
 
     <script>
-        // 获取图片列表并初始化幻灯片
+        let allImgElements = [];
+        let imageAddedPromises = [];
+
+        function createImgElement(image) {
+            const imgElement = document.createElement('img');
+            imgElement.classList.add('slide');
+            imgElement.src = image.src;
+            return imgElement;
+        }
+
+        function setActive(imgElement) {
+            const activeSlide = document.querySelector('.slide.active');
+            if (activeSlide) {
+                activeSlide.classList.remove('active');
+            }
+            imgElement.classList.add('active');
+        }
+
+        function addToContainer(imgElement, resolve) {
+            document.getElementById('slideshow').appendChild(imgElement);
+            allImgElements.push(imgElement);
+            if (resolve) {
+                resolve();
+            }
+        }
+
+        async function loadRemainingImages(imagePaths) {
+            for (const path of imagePaths) {
+                const img = await loadImage(path);
+                const imgElement = createImgElement(img);
+                const promise = new Promise((resolve) => {
+                    addToContainer(imgElement, resolve);
+                });
+                imageAddedPromises.push(promise);
+            }
+        }
+
+        function startSwitchInterval(totalImages) {
+            let currentIndex = 0;
+            const intervalId = window.setInterval(() => {
+                currentIndex = (currentIndex + 1) % totalImages;
+                waitAndSwitch(currentIndex);
+            }, 5000);
+        }
+
+        async function waitAndSwitch(index) {
+            await imageAddedPromises[index];
+            if (index < allImgElements.length) {
+                setActive(allImgElements[index]);
+            } else {
+                console.error('Index out of bounds');
+            }
+        }
+
         async function initSlideshow() {
             try {
-                // 获取图片目录列表
                 const response = await fetch('/images/');
                 const html = await response.text();
                 const parser = new DOMParser();
                 const doc = parser.parseFromString(html, 'text/html');
-
-                // 提取图片文件（支持常见图片格式）
                 const images = Array.from(doc.querySelectorAll('a'))
                     .map(a => a.href.split('/').pop())
                     .filter(file => /\.(jpe?g|png|gif|webp|bmp)$/i.test(file))
                     .sort(() => Math.random() - 0.5)
                     .map(file => `/images/${file}`);
+                const totalImages = images.length;
 
                 if (images.length === 0) {
                     alert('未找到图片，请将图片放入/images/目录');
                     return;
                 }
 
-                // 创建幻灯片容器
-                const container = document.getElementById('slideshow');
+                const firstImage = await loadImage(images[0]);
+                const firstImgElement = createImgElement(firstImage);
+                addToContainer(firstImgElement);
+                setActive(firstImgElement);
+                imageAddedPromises = [Promise.resolve()];
+                loadRemainingImages(images.slice(1));
+                startSwitchInterval(totalImages);
 
-                // 预加载所有图片
-                const preloaded = await Promise.all(images.map(loadImage));
-
-                // 初始化显示
-                let currentIndex = 0;
-                preloaded.forEach((img, index) => {
-                    img.classList.add('slide');
-                    if (index === 0) img.classList.add('active');
-                    container.appendChild(img);
-                });
-
-                // 自动切换（每5秒）
-                setInterval(() => {
-                    const nextIndex = (currentIndex + 1) % preloaded.length;
-                    preloaded[currentIndex].classList.remove('active');
-                    preloaded[nextIndex].classList.add('active');
-                    currentIndex = nextIndex;
-                }, 5000);
-
-                // 尝试自动全屏
                 enterFullscreen();
-
             } catch (error) {
                 console.error('初始化失败:', error);
                 alert('请确保/images/目录存在且可访问');
             }
         }
 
-        // 图片预加载函数
         function loadImage(src) {
             return new Promise((resolve, reject) => {
                 const img = new Image();
@@ -114,7 +148,6 @@
             });
         }
 
-        // 全屏控制函数
         function enterFullscreen() {
             const el = document.documentElement;
             const request = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
@@ -129,7 +162,6 @@
             }
         }
 
-        // 全屏状态变化处理
         function handleFullscreenChange() {
             const isFullscreen = document.fullscreenElement ||
                               document.webkitFullscreenElement ||
@@ -138,15 +170,11 @@
             btn.style.display = isFullscreen ? 'none' : 'block';
         }
 
-        // 事件监听
         document.addEventListener('fullscreenchange', handleFullscreenChange);
         document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
         document.addEventListener('msfullscreenchange', handleFullscreenChange);
-
-        // 绑定全屏按钮点击事件
         document.getElementById('fullscreenBtn').addEventListener('click', enterFullscreen);
 
-        // 启动幻灯片
         window.onload = initSlideshow;
     </script>
 </body>
