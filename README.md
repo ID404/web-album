@@ -1,5 +1,7 @@
 # 一个简单的web相册
 
+打开网页后自动随机播放相册文件夹内的图片
+
 git clone https://github.com/ID404/web-album.git
 cd web-album
 
