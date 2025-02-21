@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>全屏随机幻灯片</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+        }
+        #slideshow {
+            position: fixed;
+            width: 100vw;
+            height: 100vh;
+            background: #000;
+        }
+        .slide {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            opacity: 0;
+            object-fit: contain;
+            transition: opacity 1s ease-in-out;
+        }
+        .slide.active {
+            opacity: 1;
+        }
+        #fullscreenBtn {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            z-index: 9999;
+            padding: 10px 20px;
+            background: rgba(0,0,0,0.7);
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            display: none;
+            transition: opacity 0.3s;
+        }
+        #fullscreenBtn:hover {
+            opacity: 0.8;
+        }
+    </style>
+</head>
+<body>
+    <div id="slideshow"></div>
+    <button id="fullscreenBtn">全屏</button>
+
+    <script>
+        // 获取图片列表并初始化幻灯片
+        async function initSlideshow() {
+            try {
+                // 获取图片目录列表
+                const response = await fetch('/images/');
+                const html = await response.text();
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(html, 'text/html');
+
+                // 提取图片文件（支持常见图片格式）
+                const images = Array.from(doc.querySelectorAll('a'))
+                    .map(a => a.href.split('/').pop())
+                    .filter(file => /\.(jpe?g|png|gif|webp|bmp)$/i.test(file))
+                    .sort(() => Math.random() - 0.5)
+                    .map(file => `/images/${file}`);
+
+                if (images.length === 0) {
+                    alert('未找到图片，请将图片放入/images/目录');
+                    return;
+                }
+
+                // 创建幻灯片容器
+                const container = document.getElementById('slideshow');
+
+                // 预加载所有图片
+                const preloaded = await Promise.all(images.map(loadImage));
+
+                // 初始化显示
+                let currentIndex = 0;
+                preloaded.forEach((img, index) => {
+                    img.classList.add('slide');
+                    if (index === 0) img.classList.add('active');
+                    container.appendChild(img);
+                });
+
+                // 自动切换（每5秒）
+                setInterval(() => {
+                    const nextIndex = (currentIndex + 1) % preloaded.length;
+                    preloaded[currentIndex].classList.remove('active');
+                    preloaded[nextIndex].classList.add('active');
+                    currentIndex = nextIndex;
+                }, 5000);
+
+                // 尝试自动全屏
+                enterFullscreen();
+
+            } catch (error) {
+                console.error('初始化失败:', error);
+                alert('请确保/images/目录存在且可访问');
+            }
+        }
+
+        // 图片预加载函数
+        function loadImage(src) {
+            return new Promise((resolve, reject) => {
+                const img = new Image();
+                img.onload = () => resolve(img);
+                img.onerror = reject;
+                img.src = src;
+            });
+        }
+
+        // 全屏控制函数
+        function enterFullscreen() {
+            const el = document.documentElement;
+            const request = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
+
+            if (request) {
+                request.call(el).catch(err => {
+                    console.log('自动全屏失败，显示手动按钮');
+                    document.getElementById('fullscreenBtn').style.display = 'block';
+                });
+            } else {
+                document.getElementById('fullscreenBtn').style.display = 'block';
+            }
+        }
+
+        // 全屏状态变化处理
+        function handleFullscreenChange() {
+            const isFullscreen = document.fullscreenElement ||
+                              document.webkitFullscreenElement ||
+                              document.msFullscreenElement;
+            const btn = document.getElementById('fullscreenBtn');
+            btn.style.display = isFullscreen ? 'none' : 'block';
+        }
+
+        // 事件监听
+        document.addEventListener('fullscreenchange', handleFullscreenChange);
+        document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+        document.addEventListener('msfullscreenchange', handleFullscreenChange);
+
+        // 绑定全屏按钮点击事件
+        document.getElementById('fullscreenBtn').addEventListener('click', enterFullscreen);
+
+        // 启动幻灯片
+        window.onload = initSlideshow;
+    </script>
+</body>
+</html>
