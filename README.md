@@ -14,3 +14,5 @@ chown -R 101:101 ./html/images
 
 docker compose up -d
 
+
+IOS将网页发送到桌面，通过桌面图标打开可以全屏播放。
