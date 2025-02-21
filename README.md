@@ -1,3 +1,5 @@
+#一个简单的web相册
+
 git clone https://github.com/ID404/web-album.git
 cd web-album
 
