@@ -1,202 +1,101 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-CN">
 <head>
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta http-equiv="refresh" content="180">  // 自动刷新时间180秒
     <meta charset="UTF-8">
-
-    <title>全屏随机幻灯片</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>随机图片展示</title>
     <style>
-        html, body {
+        body, html {
             margin: 0;
             padding: 0;
-            width: 100%;
             height: 100%;
             overflow: hidden;
+            background-color: black; /* 设置整个页面背景为黑色 */
         }
-        #slideshow {
-            position: fixed;
-            width: 100vw;
-            height: 100vh;
-            background: #000;
-        }
-        .slide {
-            position: absolute;
+        #imageContainer {
             width: 100%;
             height: 100%;
-            opacity: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background-color: black; /* 设置图片容器背景为黑色 */
+        }
+        #randomImage {
+            max-width: 100%;
+            max-height: 100%;
             object-fit: contain;
-            transition: opacity 1s ease-in-out;
         }
-        .slide.active {
-            opacity: 1;
-        }
-        #fullnameBtn {
-            position: fixed;
+        #fullscreenButton {
+            position: absolute;
             top: 10px;
             right: 10px;
-            z-index: 9999;
-            padding: 10px 20px;
-            background: rgba(0,0,0,0.7);
-            color: #fff;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            display: none;
-            transition: opacity 0.3s;
-        }
-        #fullnameBtn:hover {
-            opacity: 0.8;
+            z-index: 1000;
+            padding: 3px 5px; /* 调整内边距 */
+            font-size: 8px; /* 调整字体大小 */
+            background-color: rgba(0, 0, 0, 0.5); /* 设置半透明黑色背景 */
+            color: white; /* 设置文本颜色为白色 */
+            border: none; /* 移除边框 */
+            cursor: pointer; /* 鼠标悬停时显示指针 */
         }
     </style>
 </head>
 <body>
-    <div id="slideshow"></div>
-    <button id="fullnameBtn">全屏</button>
-
+    <button id="fullscreenButton">全屏</button>
+    <div id="imageContainer">
+        <img id="randomImage" src="" alt="随机图片">
+    </div>
     <script>
-        let allImgElements = [];
-        let imageAddedPromises = [];
+        let imageList = [];
+        let currentImageIndex = -1;
 
-        function createImgElement(image) {
-            const imgElement = document.createElement('img');
-            imgElement.classList.add('slide');
-            imgElement.src = image.src;
-            return imgElement;
-        }
-
-        function setActive(imgElement) {
-            const activeSlide = document.querySelector('.slide.active');
-            if (activeSlide) {
-                activeSlide.classList.remove('active');
-            }
-            imgElement.classList.add('active');
-        }
-
-        function addToContainer(imgElement, resolve) {
-            document.getElementById('slideshow').appendChild(imgElement);
-            allImgElements.push(imgElement);
-            if (resolve) {
-                resolve();
-            }
-        }
-
-        async function loadRemainingImages(imagePaths) {
-            const delay = 1000; // 1秒延迟
-            for (let i = 0; i < imagePaths.length; i++) {
-                await new Promise(resolve => setTimeout(resolve, i * delay));
-                const path = imagePaths[i];
-                const img = await loadImage(path);
-                const imgElement = createImgElement(img);
-                const promise = new Promise((resolve) => {
-                    addToContainer(imgElement, resolve);
+        // 获取图片列表
+        fetch('images/')
+            .then(response => response.text())
+            .then(html => {
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(html, 'text/html');
+                const links = doc.querySelectorAll('a');
+                links.forEach(link => {
+                    const href = link.getAttribute('href');
+                    if (href && href.match(/\.(jpg|jpeg|png|gif)$/i)) {
+                        imageList.push(href);
+                    }
                 });
-                imageAddedPromises.push(promise);
-            }
-        }
-
-        function startSwitchInterval(totalImages) {
-            let currentIndex = 0;
-            const intervalId = window.setInterval(() => {
-                currentIndex = (currentIndex + 1) % totalImages;
-                waitAndSwitch(currentIndex);
-            }, 10000); //播放间隔10秒
-        }
-
-        async function waitAndSwitch(index) {
-            await imageAddedPromises[index];
-            if (index < allImgElements.length) {
-                setActive(allImgElements[index]);
-            } else {
-                console.error('Index out of bounds');
-            }
-        }
-
-        async function initSlideshow() {
-            let images = [];
-
-            // 首先尝试加载 images.json
-            try {
-                const response = await fetch('images.json');
-                if (response.ok) {
-                    images = await response.json();
+                if (imageList.length > 0) {
+                    changeImage(); // 初始显示第一张图片
+                    setInterval(changeImage, 10000); // 每10秒更换一次
+                } else {
+                    console.error('未找到图片文件');
                 }
-            } catch (error) {
-                console.log('Failed to load images.json:', error);
-            }
+            })
+            .catch(error => console.error('加载图片列表失败:', error));
 
-            // 如果 images.json 没有提供图片列表，则回退到目录解析
-            if (images.length === 0) {
-                try {
-                    const response = await fetch('/images/');
-                    const html = await response.text();
-                    const parser = new DOMParser();
-                    const doc = parser.parseFromString(html, 'text/html');
-                    images = Array.from(doc.querySelectorAll('a'))
-                        .map(a => a.href.split('/').pop())
-                        .filter(file => /\.(jpe?g|png|gif|webkit|bmp)$/i.test(file))
-                        .sort(() => Math.random() - 0.5)
-                        .map(file => `/images/${file}`);
-                } catch (error) {
-                    console.error('Failed to load images from /images/ directory:', error);
-                }
-            }
-
-            const totalImages = images.length;
-
-            if (totalImages === 0) {
-                alert('请确保/images/目录存在且可访问');
-                return;
-            }
-
-            const firstImage = await loadImage(images[0]);
-            const firstImgElement = createImgElement(firstImage);
-            addToContainer(firstImgElement);
-            setActive(firstImgElement);
-            imageAddedPromises = [Promise.resolve()];
-            loadRemainingImages(images.slice(1));
-            startSwitchInterval(totalImages);
-
-            enterFullscreen();
+        // 随机更换图片
+        function changeImage() {
+            if (imageList.length === 0) return;
+            let randomIndex;
+            do {
+                randomIndex = Math.floor(Math.random() * imageList.length);
+            } while (randomIndex === currentImageIndex); // 避免重复
+            currentImageIndex = randomIndex;
+            const imagePath = 'images/' + imageList[randomIndex];
+            document.getElementById('randomImage').src = imagePath;
         }
 
-        function loadImage(src) {
-            return new Promise((resolve, reject) => {
-                const img = new Image();
-                img.onload = () => resolve(img);
-                img.onerror = reject;
-                img.src = src;
-            });
-        }
-
-        function enterFullscreen() {
-            const el = document.documentElement;
-            const request = el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen;
-
-            if (request) {
-                request.call(el).catch(err => {
-                    console.log('自动全屏失败，显示手动按钮');
-                    document.getElementById('fullnameBtn').style.display = 'block';
-                });
-            } else {
-                document.getElementById('fullnameBtn').style.display = 'block';
+        // 全屏按钮事件
+        document.getElementById('fullscreenButton').addEventListener('click', () => {
+            const elem = document.documentElement;
+            if (elem.requestFullscreen) {
+                elem.requestFullscreen();
+            } else if (elem.mozRequestFullScreen) { // Firefox
+                elem.mozRequestFullScreen();
+            } else if (elem.webkitRequestFullscreen) { // Chrome, Safari, Opera
+                elem.webkitRequestFullscreen();
+            } else if (elem.msRequestFullscreen) { // IE/Edge
+                elem.msRequestFullscreen();
             }
-        }
-
-        function handleFullscreenChange() {
-            const isFullscreen = document.fullscreenElement ||
-                              document.webkitFullscreenElement ||
-                              document.msFullscreenElement;
-            const btn = document.getElementById('fullnameBtn');
-            btn.style.display = isFullscreen ? 'none' : 'block';
-        }
-
-        document.addEventListener('fullscreenchange', handleFullscreenChange);
-        document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
-        document.addEventListener('msfullscreenchange', handleFullscreenChange);
-        document.getElementById('fullnameBtn').addEventListener('click', enterFullscreen);
-
-        window.onload = initSlideshow;
+        });
     </script>
 </body>
 </html>
