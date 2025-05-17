@@ -2,372 +2,263 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black">
-    <title>随机图片幻灯片</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>随机图片播放器 - 平滑切换</title>
     <style>
-        body, html {
+        body {
+            background-color: #000000;
             margin: 0;
-            padding: 0;
-            height: 100%;
-            width: 100%;
-            background-color: #000;
-            overflow: hidden;
-            font-family: Arial, sans-serif;
-        }
-
-        #slideshow {
-            width: 100%;
-            height: 100%;
             display: flex;
-            align-items: center;
             justify-content: center;
-            position: relative;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            color: white;
         }
 
-        .slide {
-            position: absolute;
+        #slideshow-container {
             width: 100%;
             height: 100%;
-            opacity: 0;
-            transition: opacity 1s ease-in-out;
-            object-fit: contain;
+            position: relative; /* 为内部绝对定位的图片提供参照 */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .slide-image {
+            position: absolute;
             top: 0;
             left: 0;
+            width: 100%;
+            height: 100%;
+            max-width: 100vw; /* 确保图片宽度不超过视口 */
+            max-height: 100vh;/* 确保图片高度不超过视口 */
+            object-fit: contain;
+            opacity: 0;
+            transition: opacity 0.8s ease-in-out; /* 平滑过渡效果 */
         }
 
-        .active {
+        .slide-image.active {
             opacity: 1;
+            z-index: 1; /* 确保活动图片在上方 */
+        }
+        .slide-image.loading-next {
+            z-index: 0; /* 预加载的图片在下方 */
         }
 
-        #fullscreenBtn {
+
+        #fullscreen-btn {
             position: fixed;
-            top: 20px;
-            right: 20px;
-            background-color: rgba(0, 0, 0, 0.5);
-            color: white;
-            border: none;
+            top: 15px;
+            right: 15px;
+            padding: 10px 15px;
+            background-color: rgba(0, 0, 0, 0.4);
+            color: rgba(255, 255, 255, 0.8);
+            border: 1px solid rgba(255, 255, 255, 0.3);
             border-radius: 5px;
-            padding: 10px;
             cursor: pointer;
-            z-index: 1000;
             font-size: 16px;
-        }
-
-        #fullscreenBtn:hover {
-            background-color: rgba(50, 50, 50, 0.8);
-        }
-
-        #loadingIndicator {
-            color: white;
-            position: fixed;
-            bottom: 20px;
-            left: 20px;
-            background-color: rgba(0, 0, 0, 0.5);
-            padding: 5px 10px;
-            border-radius: 5px;
-            font-size: 14px;
             z-index: 1000;
+            transition: background-color 0.3s ease, color 0.3s ease;
+            display: inline-block;
+        }
+
+        #fullscreen-btn:hover {
+            background-color: rgba(0, 0, 0, 0.6);
+            color: rgba(255, 255, 255, 1);
+        }
+
+        .loader {
+            border: 8px solid #f3f3f3;
+            border-radius: 50%;
+            border-top: 8px solid #555;
+            width: 60px;
+            height: 60px;
+            animation: spin 1s linear infinite;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            margin-top: -30px;
+            margin-left: -30px;
+            z-index: 5; /*确保在图片之上，但按钮之下*/
+            display: none; /* 初始隐藏 */
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
     </style>
 </head>
 <body>
-    <div id="slideshow"></div>
-    <button id="fullscreenBtn">全屏</button>
-    <div id="loadingIndicator">加载中...</div>
+    <div id="slideshow-container">
+        <img id="image-slot-1" class="slide-image" src="" alt="图片加载中...">
+        <img id="image-slot-2" class="slide-image" src="" alt="图片加载中...">
+        <div class="loader" id="loader"></div>
+    </div>
+    <button id="fullscreen-btn">全屏</button>
 
     <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            const slideshowContainer = document.getElementById('slideshow');
-            const fullscreenBtn = document.getElementById('fullscreenBtn');
-            const loadingIndicator = document.getElementById('loadingIndicator');
+        const imgSlot1 = document.getElementById('image-slot-1');
+        const imgSlot2 = document.getElementById('image-slot-2');
+        const fullscreenBtn = document.getElementById('fullscreen-btn');
+        const loaderElement = document.getElementById('loader');
 
-            let imageList = [];
-            let loadedImages = [];
-            let currentIndex = -1;
-            let isTransitioning = false;
-            const interval = 10000; // 10秒间隔
+        const imageListUrl = '/images/image_list.txt';
+        const imageBaseUrl = '/images/';
+        const changeInterval = 10000; // 10秒
 
-            // 检查是否是iOS全屏模式（从主屏幕启动）
-            function isIOSFullscreen() {
-                return (
-                    window.navigator.standalone === true || // iOS Safari
-                    window.matchMedia('(display-mode: standalone)').matches // iOS PWA
-                );
+        let images = [];
+        let currentIndex = 0;
+        let intervalId = null;
+
+        let currentActiveSlot = imgSlot1; // 当前显示的图片槽
+        let nextLoadingSlot = imgSlot2;   // 用于预加载的图片槽
+
+        // 打乱数组
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
             }
+        }
 
-            // 全屏功能
-            fullscreenBtn.addEventListener('click', toggleFullScreen);
+        async function fetchImageUrls() {
+            try {
+                const response = await fetch(`${imageListUrl}?t=${new Date().getTime()}`);
+                if (!response.ok) throw new Error(`无法加载图片列表: ${response.statusText}`);
+                const text = await response.text();
+                images = text.split('\n').map(name => name.trim()).filter(name => name.length > 0);
 
-            // 监听全屏状态变化
-            document.addEventListener('fullscreenchange', updateFullscreenButtonVisibility);
-            document.addEventListener('webkitfullscreenchange', updateFullscreenButtonVisibility);
-            document.addEventListener('mozfullscreenchange', updateFullscreenButtonVisibility);
-            document.addEventListener('MSFullscreenChange', updateFullscreenButtonVisibility);
-
-            // 初始检查iOS全屏状态
-            checkIOSFullscreen();
-
-            function checkIOSFullscreen() {
-                if (isIOSFullscreen()) {
-                    fullscreenBtn.style.display = 'none';
+                if (images.length === 0) {
+                    handleNoImages();
+                    return false;
                 }
+                shuffleArray(images);
+                return true;
+            } catch (error) {
+                console.error("获取图片列表失败:", error);
+                loaderElement.style.display = 'none';
+                currentActiveSlot.alt = `加载图片列表失败: ${error.message}`;
+                currentActiveSlot.classList.add('active'); // 至少显示错误信息
+                return false;
             }
+        }
 
-            // 更新全屏按钮可见性
-            function updateFullscreenButtonVisibility() {
-                if (document.fullscreenElement ||
-                    document.webkitFullscreenElement ||
-                    document.mozFullScreenElement ||
-                    document.msFullscreenElement ||
-                    isIOSFullscreen()) {
-                    // 全屏模式下隐藏按钮
-                    fullscreenBtn.style.display = 'none';
+        function handleNoImages() {
+            loaderElement.style.display = 'none';
+            currentActiveSlot.alt = '图片目录中没有找到图片或列表为空。';
+            currentActiveSlot.src = ''; // 清空src
+            currentActiveSlot.classList.add('active'); // 显示alt文本
+            console.warn("图片列表为空。");
+            if (intervalId) clearInterval(intervalId); // 停止切换
+        }
+
+        function preloadAndSwitchImage() {
+            if (images.length === 0) return;
+
+            loaderElement.style.display = 'block'; // 显示加载器直到下一张图加载完成并切换
+
+            const nextImageIndex = currentIndex % images.length;
+            const imageUrl = `${imageBaseUrl}${images[nextImageIndex]}`;
+
+            nextLoadingSlot.classList.remove('active'); // 确保预加载槽不是active
+            nextLoadingSlot.classList.add('loading-next');
+
+            nextLoadingSlot.onload = () => {
+                currentActiveSlot.classList.remove('active');
+                nextLoadingSlot.classList.add('active');
+                nextLoadingSlot.classList.remove('loading-next');
+
+                // 交换角色
+                const temp = currentActiveSlot;
+                currentActiveSlot = nextLoadingSlot;
+                nextLoadingSlot = temp;
+
+                loaderElement.style.display = 'none'; // 图片切换完成，隐藏加载器
+                currentIndex = (currentIndex + 1) % images.length; // 移到下一张，为下一次preload做准备
+            };
+
+            nextLoadingSlot.onerror = () => {
+                console.warn(`图片加载失败: ${imageUrl}. 将尝试下一张.`);
+                loaderElement.style.display = 'none'; // 即使失败也隐藏加载器
+                // 简单地跳过这张图，定时器会在下一次尝试
+                currentIndex = (currentIndex + 1) % images.length;
+                 // 如果希望错误时立即尝试下一张，可以再次调用 preloadAndSwitchImage()
+                 // 但要注意避免在网络持续错误时造成快速循环，可以加个计数器或延迟
+            };
+
+            nextLoadingSlot.src = imageUrl;
+        }
+
+        async function startSlideshow() {
+            loaderElement.style.display = 'block';
+            const hasImages = await fetchImageUrls();
+            if (!hasImages) return;
+
+            // 初始加载第一张图片到 active slot
+            currentActiveSlot.onload = () => {
+                currentActiveSlot.classList.add('active');
+                loaderElement.style.display = 'none';
+                currentIndex = (currentIndex + 1) % images.length; // 指向下一张，供 preload 使用
+
+                // 预加载下一张 (如果只有一张图片，则不需要)
+                if (images.length > 1) {
+                    preloadAndSwitchImage(); // 开始第一次预加载和后续的切换循环
                 } else {
-                    // 非全屏模式下显示按钮
-                    fullscreenBtn.style.display = 'block';
-                }
-            }
-
-            function toggleFullScreen() {
-                if (!document.fullscreenElement) {
-                    if (document.documentElement.requestFullscreen) {
-                        document.documentElement.requestFullscreen();
-                    } else if (document.documentElement.webkitRequestFullscreen) { // Safari
-                        document.documentElement.webkitRequestFullscreen();
-                    } else if (document.documentElement.msRequestFullscreen) { // IE11
-                        document.documentElement.msRequestFullscreen();
-                    }
-                } else {
-                    if (document.exitFullscreen) {
-                        document.exitFullscreen();
-                    } else if (document.webkitExitFullscreen) { // Safari
-                        document.webkitExitFullscreen();
-                    } else if (document.msExitFullscreen) { // IE11
-                        document.msExitFullscreen();
-                    }
-                }
-            }
-
-            // 获取图片列表
-            async function fetchImageList() {
-                try {
-                    // 使用服务器端脚本返回目录列表，这里我们假设有一个images.php文件返回图片列表
-                    // 由于纯前端无法直接读取服务器目录，我们可以使用以下两种方法之一:
-
-                    // 方法1: 如果你的nginx配置支持目录自动索引
-                    const response = await fetch('/images/');
-                    const html = await response.text();
-
-                    // 解析HTML目录列表
-                    const parser = new DOMParser();
-                    const doc = parser.parseFromString(html, 'text/html');
-                    const links = doc.querySelectorAll('a');
-
-                    links.forEach(link => {
-                        const href = link.getAttribute('href');
-                        if (href && isImageFile(href) && !href.startsWith('?') && !href.startsWith('/')) {
-                            imageList.push('/images/' + href);
-                        }
-                    });
-
-                    // 如果方法1无法工作，尝试方法2:
-                    // 创建一个空的图片列表
-                    if (imageList.length === 0) {
-                        console.log('目录索引不可用，使用备用方法...');
-                        // 从1开始尝试加载图片，直到遇到404
-                        let fileNumber = 1;
-                        let consecutiveFailures = 0;
-
-                        while (consecutiveFailures < 3) {
-                            for (const ext of ['jpg', 'jpeg', 'png', 'gif', 'webp']) {
-                                const imgPath = `/images/image${fileNumber}.${ext}`;
-                                try {
-                                    const response = await fetch(imgPath, { method: 'HEAD' });
-                                    if (response.ok) {
-                                        imageList.push(imgPath);
-                                        consecutiveFailures = 0;
-                                        break;
-                                    }
-                                } catch (error) {
-                                    // 忽略错误
-                                }
-                            }
-
-                            fileNumber++;
-                            consecutiveFailures++;
-
-                            // 如果在测试中发现图片，重置失败计数
-                            if (consecutiveFailures === 0) {
-                                continue;
-                            }
-                        }
-                    }
-
-                    // 最后的备用方法：硬编码一些可能的图片文件名模式
-                    if (imageList.length === 0) {
-                        for (let i = 1; i <= 100; i++) {
-                            for (const ext of ['jpg', 'jpeg', 'png', 'gif', 'webp']) {
-                                imageList.push(`/images/img${i}.${ext}`);
-                                imageList.push(`/images/image${i}.${ext}`);
-                                imageList.push(`/images/photo${i}.${ext}`);
-                                imageList.push(`/images/pic${i}.${ext}`);
-                            }
-                        }
-                    }
-
-                    // 打乱图片顺序
-                    shuffleArray(imageList);
-
-                    // 开始幻灯片
-                    if (imageList.length > 0) {
-                        loadingIndicator.textContent = `已找到 ${imageList.length} 张图片`;
-                        setTimeout(() => {
-                            loadingIndicator.style.opacity = '0';
-                            setTimeout(() => {
-                                loadingIndicator.style.display = 'none';
-                            }, 1000);
-                        }, 3000);
-                        startSlideshow();
-                    } else {
-                        loadingIndicator.textContent = '未找到图片';
-                    }
-                } catch (error) {
-                    console.error('获取图片列表失败:', error);
-                    loadingIndicator.textContent = '加载图片列表失败';
-                }
-            }
-
-            function isImageFile(filename) {
-                const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp'];
-                const lowerFilename = filename.toLowerCase();
-                return imageExtensions.some(ext => lowerFilename.endsWith(ext));
-            }
-
-            function shuffleArray(array) {
-                for (let i = array.length - 1; i > 0; i--) {
-                    const j = Math.floor(Math.random() * (i + 1));
-                    [array[i], array[j]] = [array[j], array[i]];
-                }
-            }
-
-            // 预加载下一张图片
-            function preloadNextImage() {
-                if (imageList.length === 0) return;
-
-                // 确定下一个要加载的索引
-                let nextIndex = currentIndex + 1;
-                if (nextIndex >= imageList.length) {
-                    // 如果已经到达列表末尾，重新打乱并从头开始
-                    shuffleArray(imageList);
-                    nextIndex = 0;
+                    // 只有一张图片，不需要定时器切换，但需要确保显示
+                    currentActiveSlot.classList.add('active');
+                    loaderElement.style.display = 'none';
                 }
 
-                // 检查图片是否已经加载
-                if (loadedImages.includes(nextIndex)) {
-                    return;
+                // 设置定时器（仅当图片多于一张时）
+                if (images.length > 1) {
+                    if (intervalId) clearInterval(intervalId);
+                    intervalId = setInterval(preloadAndSwitchImage, changeInterval);
                 }
+            };
+            currentActiveSlot.onerror = () => {
+                console.error(`初始图片加载失败: ${imageBaseUrl}${images[0]}`);
+                loaderElement.style.display = 'none';
+                currentActiveSlot.alt = '初始图片加载失败';
+                currentActiveSlot.classList.add('active'); // 即使失败也尝试显示alt
+            };
+            currentActiveSlot.src = `${imageBaseUrl}${images[currentIndex]}`; // 加载第一张
+        }
 
-                // 加载图片
-                const img = new Image();
-                img.onload = function() {
-                    loadedImages.push(nextIndex);
-                };
-                img.onerror = function() {
-                    // 如果图片加载失败，从列表中移除
-                    imageList.splice(nextIndex, 1);
-                    // 如果当前索引大于等于被移除的索引，调整当前索引
-                    if (currentIndex >= nextIndex) {
-                        currentIndex--;
-                    }
 
-                    // 尝试加载下一张
-                    setTimeout(preloadNextImage, 100);
-                };
-                img.src = imageList[nextIndex];
+        // 全屏功能
+        function toggleFullscreen() {
+            // ... (全屏逻辑保持不变) ...
+            const docEl = document.documentElement;
+            const isInFullscreen = document.fullscreenElement || document.mozFullScreenElement || document.webkitFullscreenElement || document.msFullscreenElement;
+
+            if (!isInFullscreen) {
+                if (docEl.requestFullscreen) docEl.requestFullscreen();
+                else if (docEl.mozRequestFullScreen) docEl.mozRequestFullScreen();
+                else if (docEl.webkitRequestFullscreen) docEl.webkitRequestFullscreen();
+                else if (docEl.msRequestFullscreen) docEl.msRequestFullscreen();
+            } else {
+                if (document.exitFullscreen) document.exitFullscreen();
+                else if (document.mozCancelFullScreen) document.mozCancelFullScreen();
+                else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+                else if (document.msExitFullscreen) document.msExitFullscreen();
             }
+        }
+        fullscreenBtn.addEventListener('click', toggleFullscreen);
 
-            // 显示下一张图片
-            function showNextImage() {
-                if (isTransitioning || imageList.length === 0) return;
-                isTransitioning = true;
+        function handleFullscreenChange() {
+            // ... (全屏按钮显隐逻辑保持不变) ...
+            const isInFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
+            fullscreenBtn.style.display = isInFullscreen ? 'none' : 'inline-block';
+            if (!isInFullscreen) fullscreenBtn.textContent = '全屏';
+        }
+        document.addEventListener('fullscreenchange', handleFullscreenChange);
+        document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+        document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+        document.addEventListener('MSFullscreenChange', handleFullscreenChange);
 
-                // 移除当前活动的图片
-                const currentSlide = document.querySelector('.slide.active');
-                if (currentSlide) {
-                    currentSlide.classList.remove('active');
-                    // 等待淡出完成后移除旧图片
-                    setTimeout(() => {
-                        slideshowContainer.removeChild(currentSlide);
-                    }, 1000);
-                }
-
-                // 更新索引
-                currentIndex++;
-                if (currentIndex >= imageList.length) {
-                    currentIndex = 0;
-                }
-
-                // 创建并显示新图片
-                const newSlide = document.createElement('img');
-                newSlide.classList.add('slide');
-                newSlide.src = imageList[currentIndex];
-                slideshowContainer.appendChild(newSlide);
-
-                // 等待一小段时间后添加active类以触发淡入效果
-                setTimeout(() => {
-                    newSlide.classList.add('active');
-                    isTransitioning = false;
-
-                    // 预加载下一张图片
-                    preloadNextImage();
-
-                    // 设置下一次切换
-                    setTimeout(showNextImage, interval);
-                }, 50);
-            }
-
-            // 启动幻灯片
-            function startSlideshow() {
-                // 预加载第一张图片
-                if (imageList.length > 0) {
-                    const firstImg = new Image();
-                    firstImg.onload = function() {
-                        loadedImages.push(0);
-                        // 显示第一张图片
-                        showNextImage();
-                        // 预加载下一张
-                        preloadNextImage();
-                    };
-                    firstImg.onerror = function() {
-                        imageList.splice(0, 1);
-                        if (imageList.length > 0) {
-                            startSlideshow();
-                        } else {
-                            loadingIndicator.textContent = '所有图片加载失败';
-                        }
-                    };
-                    firstImg.src = imageList[0];
-                }
-            }
-
-            // 定期检查是否有新图片
-            function checkForNewImages() {
-                // 每10分钟重新获取图片列表
-                setInterval(() => {
-                    const currentLength = imageList.length;
-                    fetchImageList().then(() => {
-                        if (imageList.length > currentLength) {
-                            console.log(`发现 ${imageList.length - currentLength} 张新图片`);
-                        }
-                    });
-                }, 600000); // 10分钟
-            }
-
-            // 开始程序
-            fetchImageList().then(checkForNewImages);
-        });
+        document.addEventListener('DOMContentLoaded', startSlideshow);
     </script>
 </body>
 </html>
