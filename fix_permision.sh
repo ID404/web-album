@@ -8,7 +8,8 @@ chown -R 101:101 ./html/images
 # 或者 Docker 容器内 Nginx 配置的 images 目录路径
 # 例如，如果你的 docker-compose.yml 里 volumes 是 - ./my_images_on_host:/usr/share/nginx/html/images
 # 那么这里的路径应该是 /usr/share/nginx/html/images
-IMAGE_DIR="/opt/album/html/images"
+current_dir=$(pwd)
+IMAGE_DIR="${current_dir}/html/images"
 
 # 图片列表文件的输出路径 (确保 Nginx 可以访问到这个文件)
 # 这里我们把它放在 IMAGE_DIR 目录下，这样 JS 可以通过 /images/image_list.txt 访问
