@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <!-- <meta name="viewport" content="width=device-width, initial-scale=1.0"> --> <!-- 移除多余的 viewport -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="相册">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>随机图片播放器 - 平滑切换</title>
+    <style>
+        body {
+            background-color: #000000;
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh; /* 使用视口高度 */
+            overflow: hidden;
+            color: white;
+            /* 为安全区域添加内边距 */
+            padding-top: constant(safe-area-inset-top);    /* iOS 11.0 */
+            padding-top: env(safe-area-inset-top);        /* iOS 11.2+ */
+            padding-bottom: constant(safe-area-inset-bottom);
+            padding-bottom: env(safe-area-inset-bottom);
+            padding-left: constant(safe-area-inset-left);
+            padding-left: env(safe-area-inset-left);
+            padding-right: constant(safe-area-inset-right);
+            padding-right: env(safe-area-inset-right);
+            box-sizing: border-box; /* 确保 padding 不会增加总宽高 */
+        }
+
+        #slideshow-container {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .slide-image {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            /* 移除 max-width/max-height in vw/vh as parent container handles safe area */
+            object-fit: contain;
+            opacity: 0;
+            transition: opacity 0.8s ease-in-out;
+        }
+
+        .slide-image.active {
+            opacity: 1;
+            z-index: 1;
+        }
+        .slide-image.loading-next {
+            z-index: 0;
+        }
+
+
+        #fullscreen-btn {
+            position: fixed;
+            padding: 10px 15px;
+            background-color: rgba(0, 0, 0, 0.4);
+            color: rgba(255, 255, 255, 0.8);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            z-index: 1000;
+            transition: background-color 0.3s ease, color 0.3s ease;
+            display: inline-block; /* JS会控制其显示/隐藏 */
+
+            /* 默认位置 */
+            top: 15px;
+            right: 15px;
+
+            /* 调整位置以适应安全区域 */
+            top: calc(15px + constant(safe-area-inset-top));
+            top: calc(15px + env(safe-area-inset-top));
+
+            right: calc(15px + constant(safe-area-inset-right));
+            right: calc(15px + env(safe-area-inset-right));
+        }
+
+        #fullscreen-btn:hover {
+            background-color: rgba(0, 0, 0, 0.6);
+            color: rgba(255, 255, 255, 1);
+        }
+
+        .loader {
+            border: 8px solid #f3f3f3;
+            border-radius: 50%;
+            border-top: 8px solid #555;
+            width: 60px;
+            height: 60px;
+            animation: spin 1s linear infinite;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            margin-top: -30px;
+            margin-left: -30px;
+            z-index: 5;
+            display: none;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div id="slideshow-container">
+        <img id="image-slot-1" class="slide-image" src="" alt="图片加载中...">
+        <img id="image-slot-2" class="slide-image" src="" alt="图片加载中...">
+        <div class="loader" id="loader"></div>
+    </div>
+    <button id="fullscreen-btn">全屏</button>
+
+    <script>
+        const imgSlot1 = document.getElementById('image-slot-1');
+        const imgSlot2 = document.getElementById('image-slot-2');
+        const fullscreenBtn = document.getElementById('fullscreen-btn');
+        const loaderElement = document.getElementById('loader');
+
+        const imageListUrl = '/images/image_list.txt';
+        const imageBaseUrl = '/images/';
+        const changeInterval = 60000; // 10秒
+
+        let images = [];
+        let currentIndex = 0;
+        let intervalId = null;
+
+        let currentActiveSlot = imgSlot1;
+        let nextLoadingSlot = imgSlot2;
+
+        // 检测浏览器是否为横屏模式
+        function isLandscape() {
+            return window.innerWidth > window.innerHeight;
+        }
+
+        // 缓存图片尺寸信息
+        const imageOrientationCache = new Map();
+
+        // 检测图片是否为横屏模式
+        function isImageLandscape(imageUrl) {
+            return new Promise((resolve) => {
+                // 检查缓存
+                if (imageOrientationCache.has(imageUrl)) {
+                    resolve(imageOrientationCache.get(imageUrl));
+                    return;
+                }
+
+                const img = new Image();
+                img.onload = function() {
+                    const isLandscape = this.width > this.height;
+                    // 存入缓存
+                    imageOrientationCache.set(imageUrl, isLandscape);
+                    resolve(isLandscape);
+                };
+                img.onerror = function() {
+                    // 图片加载失败时默认为横屏
+                    resolve(true);
+                };
+                img.src = imageUrl;
+            });
+        }
+
+        function shuffleArray(array) {
+            for (let i = array.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [array[i], array[j]] = [array[j], array[i]];
+            }
+        }
+
+        async function fetchImageUrls() {
+            try {
+                const response = await fetch(`${imageListUrl}?t=${new Date().getTime()}`);
+                if (!response.ok) throw new Error(`无法加载图片列表: ${response.statusText}`);
+                const text = await response.text();
+                images = text.split('\n').map(name => name.trim()).filter(name => name.length > 0);
+
+                if (images.length === 0) {
+                    handleNoImages();
+                    return false;
+                }
+                shuffleArray(images);
+                return true;
+            } catch (error) {
+                console.error("获取图片列表失败:", error);
+                loaderElement.style.display = 'none';
+                currentActiveSlot.alt = `加载图片列表失败: ${error.message}`;
+                currentActiveSlot.classList.add('active');
+                return false;
+            }
+        }
+
+        function handleNoImages() {
+            loaderElement.style.display = 'none';
+            currentActiveSlot.alt = '图片目录中没有找到图片或列表为空。';
+            currentActiveSlot.src = '';
+            currentActiveSlot.classList.add('active');
+            console.warn("图片列表为空。");
+            if (intervalId) clearInterval(intervalId);
+        }
+
+        async function preloadAndSwitchImage() {
+            if (images.length === 0) return;
+
+            loaderElement.style.display = 'block';
+            const browserIsLandscape = isLandscape();
+
+            // 查找匹配当前浏览器方向的图片
+            let foundMatchingImage = false;
+            let attempts = 0;
+            const maxAttempts = images.length; // 最多尝试所有图片
+
+            // 查找匹配当前浏览器方向的图片
+            let imageUrl = `${imageBaseUrl}${images[currentIndex]}`;
+            let nextImageIndex = currentIndex;
+
+            try {
+                while (!foundMatchingImage && attempts < maxAttempts) {
+                    nextImageIndex = (currentIndex + attempts) % images.length;
+                    const nextImageUrl = `${imageBaseUrl}${images[nextImageIndex]}`;
+                    const imageLandscape = await isImageLandscape(nextImageUrl);
+
+                    if (imageLandscape === browserIsLandscape) {
+                        foundMatchingImage = true;
+                        currentIndex = nextImageIndex;
+                        imageUrl = nextImageUrl;
+                        break;
+                    }
+                    attempts++;
+                }
+            } catch (error) {
+                console.error('Error checking image orientation:', error);
+            }
+
+            nextLoadingSlot.classList.remove('active');
+            nextLoadingSlot.classList.add('loading-next');
+            nextLoadingSlot.src = imageUrl;
+
+            nextLoadingSlot.onload = () => {
+                currentActiveSlot.classList.remove('active');
+                nextLoadingSlot.classList.add('active');
+                nextLoadingSlot.classList.remove('loading-next');
+
+                const temp = currentActiveSlot;
+                currentActiveSlot = nextLoadingSlot;
+                nextLoadingSlot = temp;
+
+                loaderElement.style.display = 'none';
+                currentIndex = (currentIndex + 1) % images.length;
+            };
+
+            nextLoadingSlot.onerror = () => {
+                console.warn(`图片加载失败: ${imageUrl}. 将尝试下一张.`);
+                loaderElement.style.display = 'none';
+                currentIndex = (currentIndex + 1) % images.length;
+            };
+
+            nextLoadingSlot.src = imageUrl;
+        }
+
+        async function startSlideshow() {
+            loaderElement.style.display = 'block';
+            const hasImages = await fetchImageUrls();
+            if (!hasImages) return;
+
+            // 初始加载时也检查横竖屏
+            const browserIsLandscape = isLandscape();
+            let initialImageIndex = 0;
+            let foundMatchingImage = false;
+
+            // 查找第一张匹配的图片
+            for (let i = 0; i < images.length; i++) {
+                const imageUrl = `${imageBaseUrl}${images[i]}`;
+                const imageLandscape = await isImageLandscape(imageUrl);
+                if (imageLandscape === browserIsLandscape) {
+                    initialImageIndex = i;
+                    foundMatchingImage = true;
+                    break;
+                }
+            }
+
+            currentIndex = initialImageIndex;
+            const initialImageUrl = `${imageBaseUrl}${images[currentIndex]}`;
+
+            currentActiveSlot.onload = () => {
+                currentActiveSlot.classList.add('active');
+                loaderElement.style.display = 'none';
+                currentIndex = (currentIndex + 1) % images.length;
+
+                if (images.length > 1) {
+                    preloadAndSwitchImage();
+                } else {
+                    currentActiveSlot.classList.add('active');
+                    loaderElement.style.display = 'none';
+                }
+
+                if (images.length > 1) {
+                    if (intervalId) clearInterval(intervalId);
+                    intervalId = setInterval(preloadAndSwitchImage, changeInterval);
+                }
+            };
+            currentActiveSlot.onerror = () => {
+                console.error(`初始图片加载失败: ${imageBaseUrl}${images[0]}`);
+                loaderElement.style.display = 'none';
+                currentActiveSlot.alt = '初始图片加载失败';
+                currentActiveSlot.classList.add('active');
+            };
+            currentActiveSlot.src = initialImageUrl;
+        }
+
+
+        // 全屏功能
+        function toggleFullscreen() {
+            const docEl = document.documentElement;
+            const isInFullscreen = document.fullscreenElement || document.mozFullScreenElement || document.webkitFullscreenElement || document.msFullscreenElement;
+
+            if (!isInFullscreen) {
+                if (docEl.requestFullscreen) docEl.requestFullscreen();
+                else if (docEl.mozRequestFullScreen) docEl.mozRequestFullScreen();
+                else if (docEl.webkitRequestFullscreen) docEl.webkitRequestFullscreen();
+                else if (docEl.msRequestFullscreen) docEl.msRequestFullscreen();
+            } else {
+                if (document.exitFullscreen) document.exitFullscreen();
+                else if (document.mozCancelFullScreen) document.mozCancelFullScreen();
+                else if (document.webkitExitFullscreen) document.webkitExitFullscreen();
+                else if (document.msExitFullscreen) document.msExitFullscreen();
+            }
+        }
+
+        function handleFullscreenChange() {
+            const isInFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement || document.mozFullScreenElement || document.msFullscreenElement);
+
+            // 如果是 Apple Web App (standalone) 模式，全屏按钮始终隐藏
+            if (window.navigator.standalone === true) {
+                if(fullscreenBtn) fullscreenBtn.style.display = 'none';
+                return; // 直接返回，不执行后续逻辑
+            }
+
+            // 对于非 standalone 模式（普通浏览器）
+            if(fullscreenBtn) {
+                fullscreenBtn.style.display = isInFullscreen ? 'none' : 'inline-block';
+                if (!isInFullscreen) {
+                    fullscreenBtn.textContent = '全屏';
+                }
+                // 可选: if (isInFullscreen) { fullscreenBtn.textContent = '退出全屏'; }
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            startSlideshow();
+
+            // 检测是否为 Apple Web App 模式 (PWA on iOS "Added to Home Screen")
+            if (window.navigator.standalone === true) {
+                if (fullscreenBtn) {
+                    fullscreenBtn.style.display = 'none';
+                }
+                // 在 standalone 模式下，不注册浏览器全屏按钮的事件监听
+            } else {
+                // 仅在非 standalone 模式下（即普通浏览器标签页）启用全屏按钮和相关事件
+                if (fullscreenBtn) {
+                    fullscreenBtn.addEventListener('click', toggleFullscreen);
+                }
+                document.addEventListener('fullscreenchange', handleFullscreenChange);
+                document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+                document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+                document.addEventListener('MSFullscreenChange', handleFullscreenChange);
+
+                // 初始检查全屏状态，以防页面加载时已处于全屏模式
+                handleFullscreenChange();
+            }
+        });
+    </script>
+</body>
+</html>
